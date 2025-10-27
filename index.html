@@ -1,100 +1,120 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1.0">
   <title>Robot Vision Analyzer</title>
   <style>
-    body { font-family: Arial; padding: 20px; }
-    #preview { max-width: 250px; display: block; margin-top: 10px; }
-    .output { background: #f4f4f4; padding: 10px; margin-top: 10px; white-space: pre-wrap; }
-    button { padding: 10px 15px; margin-top: 10px; cursor: pointer; }
+    body { font-family: Arial, sans-serif; padding: 20px; background: #121212; color: #eee; }
+    h2, h3 { color: #0af; }
+    #preview { max-width: 250px; display: block; margin-top: 10px; border: 1px solid #333; }
+    .output { background: #222; padding: 10px; margin-top: 10px; white-space: pre-wrap; border-radius: 5px; }
+    button { padding: 10px 15px; margin-top: 10px; cursor: pointer; background: #0af; color: #000; border: none; border-radius: 5px; }
+    button:hover { background: #08c; }
   </style>
 </head>
 <body>
 
-  <h2>Robot Vision Analyzer</h2>
-  <input type="file" id="imageInput" accept="image/*" />
-  <img id="preview" />
-  <button onclick="analyze()">Analyze</button>
+<h2>Robot Vision Analyzer</h2>
+<input type="file" id="imageInput" accept="image/*">
+<img id="preview">
+<button onclick="analyze()">Analyze</button>
 
-  <h3>ClipTagger Labels</h3>
-  <div id="labels" class="output"></div>
+<h3>ClipTagger Labels</h3>
+<div id="labels" class="output"></div>
 
-  <h3>Movement Decision (GPT-5-Nano)</h3>
-  <div id="decision" class="output"></div>
+<h3>Movement Decision (GPT-5-Nano)</h3>
+<div id="decision" class="output"></div>
 
-  <script>
-    const API_KEY = "YOUR_A4F_API_KEY";
-    const API_URL = "https://api.a4f.co/v1/chat/completions";
+<script>
+const API_KEY = "ddc-a4f-d61cbe09b0f945ea93403a420dba8155";
+const API_URL = "https://api.a4f.co/v1/chat/completions";
 
-    let base64Image = "";
+let base64Image = "";
 
-    // Read image and preview
-    document.getElementById('imageInput').addEventListener('change', function(e) {
-      const file = e.target.files[0];
-      const reader = new FileReader();
-      reader.onload = function() {
-        base64Image = reader.result.split(',')[1];
-        document.getElementById('preview').src = reader.result;
-      };
-      reader.readAsDataURL(file);
+document.getElementById('imageInput').addEventListener('change', function(e){
+  const file = e.target.files[0];
+  if(!file) return;
+  const reader = new FileReader();
+  reader.onload = function() {
+    base64Image = reader.result.split(',')[1];
+    document.getElementById('preview').src = reader.result;
+  };
+  reader.readAsDataURL(file);
+});
+
+async function analyze() {
+  if (!base64Image) return alert("Upload an image first!");
+
+  const dataUrl = `data:image/jpeg;base64,${base64Image}`;
+  const labelsDiv = document.getElementById("labels");
+  const decisionDiv = document.getElementById("decision");
+
+  labelsDiv.textContent = "Processing...";
+  decisionDiv.textContent = "Processing...";
+
+  try {
+    // ClipTagger request
+    let taggerRes = await fetch(API_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${API_KEY}`
+      },
+      body: JSON.stringify({
+        model: "provider-6/cliptagger-12b",
+        messages: [
+          { role: "user", content: [
+            { type: "text", text: "Tag this image." },
+            { type: "image_url", image_url: { url: dataUrl } }
+          ]}
+        ]
+      })
     });
 
-    async function analyze() {
-      if (!base64Image) return alert("Upload an image first!");
-
-      const dataUrl = `data:image/jpeg;base64,${base64Image}`;
-
-      // --- 1) Vision: ClipTagger ---
-      const taggerRes = await fetch(API_URL, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${API_KEY}`
-        },
-        body: JSON.stringify({
-          model: "provider-6/cliptagger-12b",
-          messages: [
-            {
-              role: "user",
-              content: [
-                { type: "text", text: "Tag this image." },
-                { type: "image_url", image_url: { url: dataUrl } }
-              ]
-            }
-          ]
-        })
-      }).then(r => r.json());
-
-      const labels = taggerRes?.choices?.[0]?.message?.content || "No labels";
-      document.getElementById("labels").textContent = labels;
-
-      // --- 2) GPT Movement Decision ---
-      const gptRes = await fetch(API_URL, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${API_KEY}`
-        },
-        body: JSON.stringify({
-          model: "provider-3/gpt-5-nano",
-          messages: [
-            {
-              role: "user",
-              content: [
-                { type: "text", text: `Based on these labels, decide movement in robotic short format:\n${labels}` },
-                { type: "image_url", image_url: { url: dataUrl } }
-              ]
-            }
-          ]
-        })
-      }).then(r => r.json());
-
-      const decision = gptRes?.choices?.[0]?.message?.content || "No decision";
-      document.getElementById("decision").textContent = decision;
+    if (!taggerRes.ok) {
+      const errText = await taggerRes.text();
+      throw new Error(`ClipTagger Error ${taggerRes.status}: ${errText}`);
     }
-  </script>
+
+    let taggerJson = await taggerRes.json();
+    const labels = taggerJson?.choices?.[0]?.message?.content || "No labels found";
+    labelsDiv.textContent = labels;
+
+    // GPT-5-Nano movement reasoning
+    let gptRes = await fetch(API_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${API_KEY}`
+      },
+      body: JSON.stringify({
+        model: "provider-3/gpt-5-nano",
+        messages: [
+          { role: "user", content: [
+            { type: "text", text: `Based on these labels, decide movement in short robotic format:\n${labels}` },
+            { type: "image_url", image_url: { url: dataUrl } }
+          ]}
+        ]
+      })
+    });
+
+    if (!gptRes.ok) {
+      const errText = await gptRes.text();
+      throw new Error(`GPT-5-Nano Error ${gptRes.status}: ${errText}`);
+    }
+
+    let gptJson = await gptRes.json();
+    const decision = gptJson?.choices?.[0]?.message?.content || "No decision found";
+    decisionDiv.textContent = decision;
+
+  } catch (e) {
+    labelsDiv.textContent = `ERROR: ${e.message}`;
+    decisionDiv.textContent = `ERROR: ${e.message}`;
+    console.error(e);
+  }
+}
+</script>
 
 </body>
 </html>
