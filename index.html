@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Robot Vision Controller</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<style>
+    body { font-family: Arial, sans-serif; background:#0b0e12; color:white; text-align:center; padding:20px; }
+    button { padding:10px 18px; margin:5px; background:#1e88e5; border:none; color:white; border-radius:6px; cursor:pointer; }
+    button:hover { background:#1565c0; }
+    #preview { max-width:300px; margin-top:10px; border-radius:8px; }
+    #outputBox { background:#11161d; margin-top:20px; padding:15px; border-radius:10px; text-align:left; }
+    video { width:300px; border-radius:8px; margin-top:10px; }
+</style>
+</head>
+
+<body>
+<h2>Robot Vision — ClipTagger + GPT Nano</h2>
+
+<input type="file" id="fileInput"><br>
+<button onclick="startWebcam()">Use Webcam</button>
+<button onclick="captureWebcam()">Capture</button>
+<br>
+<video id="webcam" autoplay></video>
+<img id="preview">
+
+<br><br>
+<button onclick="processImage()">Analyse Image</button>
+
+<div id="outputBox"></div>
+
+<script>
+const API_KEY = "ddc-a4f-d61cbe09b0f945ea93403a420dba8155";
+const API_URL = "https://api.a4f.co/v1/chat/completions";
+let capturedImageBase64 = null;
+
+// Webcam
+async function startWebcam() {
+    const video = document.getElementById("webcam");
+    video.srcObject = await navigator.mediaDevices.getUserMedia({ video: true });
+}
+function captureWebcam() {
+    const video = document.getElementById("webcam");
+    const canvas = document.createElement("canvas");
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    const ctx = canvas.getContext("2d");
+    ctx.drawImage(video, 0, 0);
+    capturedImageBase64 = canvas.toDataURL("image/jpeg").split(",")[1];
+    document.getElementById("preview").src = "data:image/jpeg;base64," + capturedImageBase64;
+}
+
+// Convert upload to base64
+document.getElementById("fileInput").addEventListener("change", async (e) => {
+    const file = e.target.files[0];
+    const reader = new FileReader();
+    reader.onload = () => {
+        capturedImageBase64 = reader.result.split(",")[1];
+        document.getElementById("preview").src = reader.result;
+    };
+    reader.readAsDataURL(file);
+});
+
+// MAIN PROCESS
+async function processImage() {
+    if (!capturedImageBase64) return alert("No image selected!");
+
+    const dataURL = `data:image/jpeg;base64,${capturedImageBase64}`;
+    const output = document.getElementById("outputBox");
+    output.innerHTML = "Processing...";
+
+    // STEP 1 — CLIPTAGGER
+    const clipResponse = await fetch(API_URL, {
+        method: "POST",
+        headers: { "Authorization": `Bearer ${API_KEY}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+            provider: "provider-6",
+            model: "cliptagger",
+            messages: [{
+                role: "user",
+                content: [
+                    { "type": "text", "text": "Tag this image." },
+                    { "type": "image_url", "image_url": { "url": dataURL } }
+                ]
+            }]
+        })
+    }).then(r => r.json());
+
+    const labels = clipResponse?.choices?.[0]?.message?.content || "none";
+
+    // STEP 2 — GPT Movement Brain
+    const gptResponse = await fetch(API_URL, {
+        method: "POST",
+        headers: { "Authorization": `Bearer ${API_KEY}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+            provider: "provider-3",
+            model: "gpt-4.1-nano",
+            messages: [{
+                role: "user",
+                content: [
+                    { "type": "input_text", "text": `Image labels: ${labels}\nReturn JSON with: safe, action, reason.` },
+                    { "type": "input_image", "image_url": dataURL }
+                ]
+            }]
+        })
+    }).then(r => r.json());
+
+    const moveJSON = gptResponse?.choices?.[0]?.message?.content;
+
+    output.innerHTML = `
+        <b>ClipTagger labels:</b><br>${labels}<br><br>
+        <b>Movement Decision:</b><pre>${moveJSON}</pre>
+    `;
+}
+</script>
+
+</body>
+</html>
+  
